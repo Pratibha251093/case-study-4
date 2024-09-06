@@ -1,0 +1,160 @@
+provider "aws" {
+region = "ap-south-1"
+access_key = var.access
+secret_key = var.secret
+}
+resource "aws_instance" "app" {
+
+    count = length(var.subnet_cidr)
+    ami = "ami-08ee1453725d19cdb"
+  instance_type = "t2.micro"
+subnet_id = aws_subnet.subnet[count.index].id
+vpc_security_group_ids = [aws_security_group.app_sg.id]
+iam_instance_profile = aws_iam_instance_profile.ec2_instance_profile.name
+associate_public_ip_address = true
+
+user_data =  <<-EOF
+#!/bin/bash
+yum update-y
+amazon-linux-extras install docker
+service docker start 
+usermod -a -G docker ec2-user
+ yum update -y
+ yum install -y amazon-linux-extras
+ amazon-linux-extras install epel -y
+ yum install -y fuse s3fs-fuse  
+  # Set up s3fs with IAM role permissions
+ echo "my-aws-access-key:my-aws-secret-key" > /etc/passwd-s3fs
+ chmod 600 /etc/passwd-s3f 
+  # Mount S3 bucket to a directory
+ mkdir -p /mnt/s3bucket
+ s3fs my-shared-bucket-112233 /mnt/s3bucket -o iam_role=auto -o allow_othe 
+  # Add to fstab to remount after reboot
+ echo "s3fs#my-shared-bucket-112233 /mnt/s3bucket fuse _netdev,iam_role=auto,allow_other 0 0" >> /etc/fstab
+  
+EOF
+tags = {
+ Name = "AppInstance-${count.index + 1}"
+}
+}
+
+resource "aws_iam_role" "ec2_role" {
+  name = "ec2_access_s3"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "ec2_policy" {
+  name   = "ec2_access_s3_policy"
+  role   = aws_iam_role.ec2_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action   = "s3:*"
+      Effect   = "Allow"
+      Resource = "arn:aws:s3:::${aws_s3_bucket.shared_bucket.bucket}/*"
+    }]
+  })
+}
+
+resource "aws_iam_instance_profile" "ec2_instance_profile" {
+  name = "ec2_instance_profile"
+  role = aws_iam_role.ec2_role.name
+}
+
+
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "main-igw"
+  }
+}
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+    Name = "public-route-table"
+  }
+}
+resource "aws_route_table_association" "subnet_association" {
+  count = length(var.subnet_cidr)
+  subnet_id = aws_subnet.subnet[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+resource "aws_s3_bucket" "shared_bucket" {
+  bucket = "my-shared-bucket-112233"  # Choose a unique name
+}
+
+resource "aws_security_group" "app_sg" {
+    name = "app_sg"
+    description = "Allow SSH and HTTP"
+    vpc_id = aws_vpc.main.id
+
+
+    ingress  {
+
+        from_port = 22
+        to_port = 22
+        protocol = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+       
+    }
+    ingress  {
+
+        from_port = 80
+        to_port = 80
+        protocol = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+       
+    }
+   
+     egress {
+        from_port = 0
+        to_port = 0
+        protocol = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+
+            
+        }
+  
+}
+
+variable "access" {
+
+  default = "AKIAWOOXUACHC62PWIY3"
+}
+variable "secret" {
+    default = "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"
+  
+}
+
+variable "vpc_cidr" {
+    default = "10.10.0.0/16"
+  
+}
+variable "subnet_cidr" {
+    type = list(string)
+    default = [ "10.10.1.0/24","10.10.2.0/24" ]
+  
+}
+variable "availability_zones" {
+    type = list(string)
+    default = [ "ap-south-1a","ap-south-1b" ]
+  
+}

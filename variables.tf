@@ -1,9 +1,9 @@
 variable "access" {
 
-  default = "AKIAWOOXUACHC62PWIY3"
+  default = "access key"
 }
 variable "secret" {
-    default = "ZgG8jK7cwI1W6f+D48YrGk7OZRk2J/JNvC816m9m"
+    default = "secrete keey"
   
 }
 
